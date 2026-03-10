@@ -17,3 +17,9 @@ config/features=PackedStringArray("4.6", "C#", "Forward Plus")
 [dotnet]
 
 project/assembly_name="Aula3D"
+
+[shader_globals]
+
+plane_distance_x={"type": "float", "value": 10000.0}
+plane_distance_y={"type": "float", "value": 10000.0}
+plane_distance_z={"type": "float", "value": 10000.0}
