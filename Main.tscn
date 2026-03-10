@@ -59,6 +59,7 @@ text = "Eixo X"
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
+max_value = 360.0
 value = 50.0
 
 [node name="HBoxY" type="HBoxContainer" parent="UIManager/Panel/VBoxContainer" unique_id=256498626]
@@ -72,6 +73,7 @@ text = "Eixo Y"
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
+max_value = 360.0
 value = 50.0
 
 [node name="HBoxZ" type="HBoxContainer" parent="UIManager/Panel/VBoxContainer" unique_id=1738396011]
@@ -85,6 +87,7 @@ text = "Eixo Z"
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
+max_value = 360.0
 value = 50.0
 
 [node name="HSeparator2" type="HSeparator" parent="UIManager/Panel/VBoxContainer" unique_id=469825301]

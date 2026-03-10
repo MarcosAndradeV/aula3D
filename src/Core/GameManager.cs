@@ -27,7 +27,7 @@ public partial class GameManager : Node
 			Filters = new string[] { "*.glb, *.gltf ; GLTF Models" },
 			UseNativeDialog = false // Mantém o dialog embutido do Godot, mais seguro no Linux de não falhar
 		};
-		
+
 		_fileDialog.FileSelected += OnFileSelected;
 		AddChild(_fileDialog);
 	}
@@ -39,19 +39,16 @@ public partial class GameManager : Node
 
 	private void HandleAxisValuesChanged(float x, float y, float z)
 	{
-		if (_modelManager != null)
-		{
-			// Exemplo: Usando a função SetModelRotation que foi criada no ModelManager.
-			// Dependendo do range do seu Slider na interface (ex: 0 a 100 ou 0 a 360), 
-			// você pode multiplicar aqui se necessário. Estou passando diretamente.
-			_modelManager.SetModelRotation(x, y, z);
-		}
-	}
+        // Exemplo: Usando a função SetModelRotation que foi criada no ModelManager.
+        // Dependendo do range do seu Slider na interface (ex: 0 a 100 ou 0 a 360),
+        // você pode multiplicar aqui se necessário. Estou passando diretamente.
+        _modelManager?.SetModelRotation(x, y, z);
+    }
 
 	private async void OnFileSelected(string path)
 	{
 		GD.Print($"Tentando carregar modelo local: {path}");
-		
+
 		if (_modelManager != null)
 		{
 			await _modelManager.LoadModelAsync(path);

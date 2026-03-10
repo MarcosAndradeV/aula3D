@@ -35,21 +35,21 @@ public partial class UIManager : CanvasLayer
 
         _btnLoadLocal = GetNodeOrNull<Button>("Panel/BtnLoadLocal");
 
-        if (_sliderX != null) 
+        if (_sliderX != null)
         {
             _sliderX.ValueChanged += (val) => UpdateClippingPlane("x", (float)val, _checkX.ButtonPressed);
             _sliderX.ValueChanged += (val) => EmitAxisValues();
         }
         if (_checkX != null) _checkX.Toggled += (pressed) => UpdateClippingPlane("x", (float)_sliderX.Value, pressed);
 
-        if (_sliderY != null) 
+        if (_sliderY != null)
         {
             _sliderY.ValueChanged += (val) => UpdateClippingPlane("y", (float)val, _checkY.ButtonPressed);
             _sliderY.ValueChanged += (val) => EmitAxisValues();
         }
         if (_checkY != null) _checkY.Toggled += (pressed) => UpdateClippingPlane("y", (float)_sliderY.Value, pressed);
 
-        if (_sliderZ != null) 
+        if (_sliderZ != null)
         {
             _sliderZ.ValueChanged += (val) => UpdateClippingPlane("z", (float)val, _checkZ.ButtonPressed);
             _sliderZ.ValueChanged += (val) => EmitAxisValues();
@@ -78,7 +78,7 @@ public partial class UIManager : CanvasLayer
         float x = _sliderX != null ? (float)_sliderX.Value : 0f;
         float y = _sliderY != null ? (float)_sliderY.Value : 0f;
         float z = _sliderZ != null ? (float)_sliderZ.Value : 0f;
-        
+
         EmitSignal(SignalName.OnAxisValuesChanged, x, y, z);
     }
 

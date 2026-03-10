@@ -7,7 +7,7 @@ public partial class CameraController : Node3D
     [Export] public float ZoomSpeed = 0.5f;
     [Export] public float PanSpeed = 0.01f;
     [Export] public float MinZoom = 1.0f;
-    [Export] public float MaxZoom = 50.0f;
+    [Export] public float MaxZoom = 150.0f;
 
     private Node3D _innerGimbal;
     private Camera3D _camera;
