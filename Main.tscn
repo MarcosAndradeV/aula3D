@@ -4,6 +4,7 @@
 [ext_resource type="Script" uid="uid://c4pb4obfvfuws" path="res://src/UI/UIManager.cs" id="2_ui"]
 [ext_resource type="Script" uid="uid://c46wp1en67glj" path="res://src/Camera/CameraController.cs" id="3_cam"]
 [ext_resource type="Script" uid="uid://ctjn8lcdf1f57" path="res://src/Core/ModelManager.cs" id="4_mod"]
+[ext_resource type="Script" uid="uid://1l4fherxx44y" path="res://src/Core/Floor.cs" id="5_fos0i"]
 
 [sub_resource type="Environment" id="Environment_main"]
 background_mode = 1
@@ -220,7 +221,7 @@ script = ExtResource("3_cam")
 [node name="InnerGimbal" type="Node3D" parent="WorldLayer/CameraGimbal" unique_id=1662997198]
 
 [node name="MainCamera" type="Camera3D" parent="WorldLayer/CameraGimbal/InnerGimbal" unique_id=1741472958]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 10)
+transform = Transform3D(0.99995035, -0.009965666, 0, 0.0095368, 0.9569182, 0.2902012, -0.002892048, -0.2901868, 0.9569657, 0, 3.0856018, 10)
 
 [node name="ModelManager" type="Node3D" parent="WorldLayer" unique_id=895041639]
 script = ExtResource("4_mod")
@@ -228,8 +229,13 @@ script = ExtResource("4_mod")
 [node name="EnvironmentSetup" type="Node3D" parent="WorldLayer" unique_id=844406396]
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="WorldLayer/EnvironmentSetup" unique_id=561983368]
-transform = Transform3D(0.707107, -0.5, 0.5, 0, 0.707107, 0.707107, -0.707107, -0.5, 0.5, 0, 5, 0)
+transform = Transform3D(0.7071068, -0.49999994, 0.5000001, 0, 0.70710695, 0.7071067, -0.7071068, -0.49999994, 0.5000001, 4.000864, 6.1758356, 0)
 shadow_enabled = true
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="WorldLayer/EnvironmentSetup" unique_id=810678239]
 environment = SubResource("Environment_main")
+
+[node name="Floor" type="CSGBox3D" parent="WorldLayer" unique_id=1099815833]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -47.460167, -1.3245392, -35.544277)
+size = Vector3(100, 0.1, 100)
+script = ExtResource("5_fos0i")
