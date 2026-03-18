@@ -22,6 +22,4 @@ public partial class Floor : CsgBox3D
 
 		this.Material = material;
 	}
-
-	public override void _Process(double delta) { }
 }

@@ -82,7 +82,6 @@ public partial class PainelAcademico : CanvasLayer
 	//       - Coordenadas X, Y, Z da mão
 	//       - FPS atual
 	//
-	// Use ConversorDeImagem.MatParaTextura(mat) para converter os frames.
 	// -------------------------------------------------------------------
 
 	// -------------------------------------------------------------------

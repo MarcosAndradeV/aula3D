@@ -76,6 +76,15 @@ public partial class Objeto3D : Node3D
 
 	public override void _Process(double delta)
 	{
+		// Captura teclas para trocar visualização do pipeline da Visão
+		if (_gestureProvider is GestorDeVisaoFacade visaoInput)
+		{
+			if (Input.IsActionJustPressed("ui_debug_1") || Input.IsKeyPressed(Key.Key1)) visaoInput.DebugViewIndex = 0;
+			if (Input.IsActionJustPressed("ui_debug_2") || Input.IsKeyPressed(Key.Key2)) visaoInput.DebugViewIndex = 1;
+			if (Input.IsActionJustPressed("ui_debug_3") || Input.IsKeyPressed(Key.Key3)) visaoInput.DebugViewIndex = 2;
+			if (Input.IsActionJustPressed("ui_debug_4") || Input.IsKeyPressed(Key.Key4)) visaoInput.DebugViewIndex = 3;
+		}
+
 		// 1. Atualiza o preview da câmera se for GestorDeVisaoFacade
 		if (_cameraPreview != null && _gestureProvider is GestorDeVisaoFacade visao)
 		{

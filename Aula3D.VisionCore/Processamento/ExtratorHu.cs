@@ -3,11 +3,10 @@ using OpenCvSharp;
 namespace Aula3D.VisionCore.Processamento
 {
     /// <summary>
-    /// Etapa 2 do pipeline PDI: calcula o contorno, o centro de massa
-    /// e os 7 Momentos de Hu do contorno da mão.
+    /// Etapa 2 do pipeline PDI: Extrai o momento geométrico da forma isolada.
     ///
-    /// Os Momentos de Hu são invariantes a escala, rotação e translação —
-    /// ideal para reconhecer a "forma" da mão independente de posição.
+    /// Necessita que o Array de contornos seja filtrado previamente (ex: pegando apenas
+    /// o contorno de maior área na Etapa 1) para não calcular massa sobre ruídos de fundo.
     /// </summary>
     public static class ExtratorHu
     {

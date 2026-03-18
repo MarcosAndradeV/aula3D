@@ -10,6 +10,11 @@ O projeto adota uma arquitetura fracamente acoplada ("Decoupled Architecture") e
 - O **Módulo de Visão (`Aula3D.VisionCore`)** processa as imagens da webcam em tempo real em uma Background Thread, isolando a performance computacional intensiva (OpenCV) da thread principal da Godot, prevenindo quedas bruscas de Frame Rate.
 - O **Módulo de Console (`Aula3D.VisionConsole`)** é um utilitário CLI para desenvolvimento. Ele permite usar a câmera nativamente e visualizar as imagens modificadas através de janelas do SO para debugar a eficácia da iluminação do ambiente.
 
+### Tolerância à Multiplataforma e Dependências Nativas (OS)
+O projeto depende de binários densos em C++ (`OpenCvSharpExtern`). Para assegurar que rodem sem falhas (como `DllNotFoundException`) em sistemas diversificados:
+- Os arquivos `.csproj` fixam os runtimes para Windows e Ubuntu. Para usuários fora do ecossistema Ubuntu (ex. Fedora ou macOS), vale a regra de compatibilidade natural da GLIBC e .NET.
+- A fachada `GestorDeVisaoFacade` integra um `NativeLibrary.SetDllImportResolver` equipado com condicional de OS (`RuntimeInformation.IsOSPlatform`). Isso força o .NET a procurar por `libOpenCvSharpExtern.so` em distribuições Linux, mas varreduras em computadores de colegas utilizando Windows tentarão extrair a `OpenCvSharpExtern.dll`, sanando problemas com o Godot.
+
 A comunicação entre a GUI (Godot) e a Visão Computacional ocorre através da interface `IGestureProvider`. Este contrato define os pontos de acesso aos dados, de forma que o script Godot pode aceitar perfeitamente o adaptador de mouse (`MouseMock.cs`) caso não haja necessidade de câmera.
 
 ---
@@ -48,14 +53,17 @@ O core de rastreamento abstrai as classes pesadas de OpenCV e lida inteiramente 
 
 ### a. `GestorDeVisaoFacade.cs`
 
-Implementa a thread secundária. A classe instancia o stream da câmera e aplica um loop infinito `while (IsRunning)`. O processamento é delegado aos vários Steps ("Etapas"). Se as operações custarem `30ms` de GPU/CPU, a Godot (que requer frames a cada `16ms`) continuará performando lida a variável atômica exposta publicamente.
+Implementa a thread secundária. A classe instancia o stream da câmera e aplica um loop infinito `while (IsRunning)`. O processamento é delegado aos vários Steps ("Etapas"). Se as operações custarem `30ms` de GPU/CPU, a Godot (que requer frames a cada `16ms`) continuará performando lida a variável atômica exposta publicamente. Adicionalmente, possui a injeção nativa de compatibilidade `.so`/`.dll` para sistemas não-Ubuntu.
 
-### b. Pipeline de Processamento de Imagem
+### b. Pipeline de Processamento de Imagem (`FiltroEspacial.cs`)
 
-O script `FiltroEspacial.cs` toma o Frame BGR gerado:
-1. **Conversão de Cores HSV**: Transforma o matiz em HSV porque é altamente resistente à variação de iluminação do que RGB.
-2. **Máscara Binária (`inRange`)**: Recorta apenas os pixels cujas cores caem sobre certas constantes limitadoras de pele ou um objeto de marcador colorido da mão do usuário.
-3. **Morfologia Matemática (EROSION / DILATION)**: Remove o ruído ("saltos aleatórios nos pixels") da máscara reduzindo pequenos pontos, gerando o contorno contínuo das juntas e palma.
+O script `FiltroEspacial.cs` toma o Frame BGR gerado e aplica rigorosamente o clássico fluxo PDI:
+1. **Filtro Bilateral**: Remove a textura microscópica da pele e manchas, mas segura geometricamente as arestas principais. Evita distorções para o cálculo de borda.
+2. **CLAHE (Equalização de Histograma Local)**: Extrai o canal de contraste do padrão HSV (o Brilho) para tratar iluminação desigual entre os dois lados da mão.
+3. **Máscara Binária (`inRange`) & Morfologia**: Peneira pixels entre um `LowerBound` e `UpperBound` e fecha os eventuais buracos contidos na máscara matemática com Dilação.
+4. **Distance Transform (Separação do Pulso)**: Remove as raízes estendidas do braço limitando-se ao centro do raio perfeito da palma.
+5. **Filtro Frequencial (FFT 2D) Passa-Baixa**: Extração da imagem de alta frequência do espectro complexo minimiza o ruído "granulado" captado em webcams por falta de sensores caros.
+6. **Bordas de Canny**: As bordas reais são computadas do Filtro de Frequência, limitando precisamente onde o HSV deve focar através da intersecção.
 
 ### c. `ClassificadorDeGestos.cs` - (O Cálculo e Detecção do "Fechado")
 

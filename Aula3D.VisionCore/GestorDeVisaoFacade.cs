@@ -21,13 +21,17 @@ namespace Aula3D.VisionCore
         {
             try
             {
-                // Intercepta e ensina o Godot exatamente ONDE está a biblioteca C++ no Linux
+                // Intercepta e carrega a biblioteca nativa do OpenCV corretamente, mitigando erros no Godot (DllNotFoundException).
+                // Adapta a extensão automaticamente para suportar colegas utilizando Windows (.dll) ou Linux/Pop!_OS/Fedora (.so).
                 NativeLibrary.SetDllImportResolver(typeof(OpenCvSharp.Mat).Assembly, (libraryName, assembly, searchPath) =>
                 {
                     if (libraryName == "OpenCvSharpExtern")
                     {
+                        bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+                        string fileName = isWindows ? "OpenCvSharpExtern.dll" : "libOpenCvSharpExtern.so";
+                        
                         string cwd = System.IO.Directory.GetCurrentDirectory();
-                        string customPath = System.IO.Path.Combine(cwd, "libOpenCvSharpExtern.so");
+                        string customPath = System.IO.Path.Combine(cwd, fileName);
 
                         if (System.IO.File.Exists(customPath))
                         {
@@ -56,6 +60,8 @@ namespace Aula3D.VisionCore
         public bool  IsHandOpen => GestoDetectado;
         public float Z          { get; private set; }       // estimativa de profundidade por área
         public byte[]? FrameBuffer { get; private set; }
+        
+        public int DebugViewIndex { get; set; } = 0; // 0 = Original, 1 = FFT, 2 = Mask, 3 = Canny
 
         private CancellationTokenSource? _cts;
         private Task?                    _visionTask;
@@ -96,16 +102,40 @@ namespace Aula3D.VisionCore
                 Rect roi       = new Rect(10, 30, sideWidth, sideHeight);
 
                 using Mat frameRoi = new Mat(frame, roi);
-                filtro.Aplicar(frameRoi);
-                Point[][] contornos = filtro.ExtrairContornos();
+
+                // --- AMOSTRAGEM: Reduz resolução para performance do FFT ---
+                double scale = 150.0 / sideWidth;
+                int newHeight = (int)(sideHeight * scale);
+                using Mat lowResRoi = new Mat();
+                Cv2.Resize(frameRoi, lowResRoi, new Size(150, newHeight), 0, 0, InterpolationFlags.Area);
+
+                // --- FFT 2D: Remoção de ruídos periódicos ---
+                // Para simplificar e evitar distorção de cores, aplicamos FFT no Luma (Brilho) ou ignoramos a cor
+                // O ideal é remover o ruido de fundo mas preservar a cor.
+                // Usaremos no filtro espacial para ajudar o Canny
+                
+                // Aplicamos o filtro de Visão (Cor HSV, CLAHE, Morfologia, Canny) no lowResRoi
+                filtro.Aplicar(lowResRoi);
+                Point[][] contornos = filtro.ExtrairContornos(minArea: 3000 * (scale * scale));
 
                 if (contornos.Length > 0)
                 {
-                    Point[] contorno = contornos[0];
-                    var resultado    = new HandTrackingResult { HandDetected = true, Contour = contorno };
+                    Point[] contornoOriginal = contornos[0];
+                    
+                    // --- RE-AMOSTRAGEM: Escala do Contorno de volta para resolução nativa ---
+                    Point[] contornoScaleBack = new Point[contornoOriginal.Length];
+                    for (int i = 0; i < contornoOriginal.Length; i++)
+                    {
+                        contornoScaleBack[i] = new Point(
+                            (int)(contornoOriginal[i].X / scale),
+                            (int)(contornoOriginal[i].Y / scale)
+                        );
+                    }
+                    
+                    var resultado    = new HandTrackingResult { HandDetected = true, Contour = contornoScaleBack };
 
-                    ExtratorHu.ExtrairGeometria(contorno, resultado);
-                    ClassificadorDeGestos.Classificar(contorno, resultado);
+                    ExtratorHu.ExtrairGeometria(contornoScaleBack, resultado);
+                    ClassificadorDeGestos.Classificar(contornoScaleBack, resultado);
 
                     HandDetected    = resultado.HandDetected;
                     GestoDetectado  = resultado.IsHandOpen;
@@ -147,9 +177,27 @@ namespace Aula3D.VisionCore
                 Cv2.PutText(frame, "AREA DE CONTROLE 3D", new Point(roi.X, roi.Y - 10),
                     HersheyFonts.HersheySimplex, 0.5, new Scalar(255, 255, 0), 1);
 
+                Mat frameToEncode = frame;
+
+                if (DebugViewIndex == 1 && !filtro.MatFFT.Empty())
+                {
+                    frameToEncode = filtro.MatFFT;
+                    Cv2.PutText(frameToEncode, "Visualizacao: 1. FFT Passa-Baixa", new Point(10, 20), HersheyFonts.HersheySimplex, 0.5, Scalar.White, 1);
+                }
+                else if (DebugViewIndex == 2 && !filtro.GetMask().Empty())
+                {
+                    frameToEncode = filtro.GetMask();
+                    Cv2.PutText(frameToEncode, "Visualizacao: 2. Mascara HSV + CLAHE", new Point(10, 20), HersheyFonts.HersheySimplex, 0.5, Scalar.White, 1);
+                }
+                else if (DebugViewIndex == 3 && !filtro.MatCanny.Empty())
+                {
+                    frameToEncode = filtro.MatCanny;
+                    Cv2.PutText(frameToEncode, "Visualizacao: 3. Bordas Canny", new Point(10, 20), HersheyFonts.HersheySimplex, 0.5, Scalar.White, 1);
+                }
+
                 // Codifica o frame JÁ DESENHADO em formato JPG leve
                 var encodeParams = new ImageEncodingParam[] { new ImageEncodingParam(ImwriteFlags.JpegQuality, 70) };
-                Cv2.ImEncode(".jpg", frame, out byte[] buffer, encodeParams);
+                Cv2.ImEncode(".jpg", frameToEncode, out byte[] buffer, encodeParams);
                 FrameBuffer = buffer;
 
                 // Trocamos o Sleep estressante por um Task.Delay moderno (Melhoria de desempenho no Godot)
