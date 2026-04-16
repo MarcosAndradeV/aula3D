@@ -2,26 +2,16 @@ using OpenCvSharp;
 using System.Runtime.InteropServices;
 using Aula3D.VisionCore.Interfaces;
 using Aula3D.VisionCore.Processamento;
-
 using System.Reflection;
 
 namespace Aula3D.VisionCore
 {
-    /// <summary>
-    /// Única classe pública acessada pelo Godot.
-    /// Esconde toda dependência do OpenCV e orquestra o pipeline PDI:
-    /// FiltroEspacial → ExtratorHu → ClassificadorDeGestos.
-    ///
-    /// Implementa <see cref="IGestureProvider"/>.
-    /// </summary>
     public class GestorDeVisaoFacade : IGestureProvider, IDisposable
     {
         static GestorDeVisaoFacade()
         {
             try
             {
-                // Intercepta e carrega a biblioteca nativa do OpenCV corretamente, mitigando erros no Godot (DllNotFoundException).
-                // Adapta a extensão automaticamente para suportar colegas utilizando Windows (.dll) ou Linux/Pop!_OS/Fedora (.so).
                 NativeLibrary.SetDllImportResolver(typeof(OpenCvSharp.Mat).Assembly, (libraryName, assembly, searchPath) =>
                 {
                     if (libraryName == "OpenCvSharpExtern")
@@ -32,15 +22,10 @@ namespace Aula3D.VisionCore
                         string cwd = System.IO.Directory.GetCurrentDirectory();
                         string customPath = System.IO.Path.Combine(cwd, fileName);
 
-                        if (System.IO.File.Exists(customPath))
-                        {
-                            return NativeLibrary.Load(customPath);
-                        }
+                        if (System.IO.File.Exists(customPath)) return NativeLibrary.Load(customPath);
+                        
                         string altPath = "/usr/local/lib/libOpenCvSharpExtern.so";
-                        if (System.IO.File.Exists(altPath))
-                        {
-                            return NativeLibrary.Load(altPath);
-                        }
+                        if (System.IO.File.Exists(altPath)) return NativeLibrary.Load(altPath);
                     }
                     return IntPtr.Zero;
                 });
@@ -48,22 +33,20 @@ namespace Aula3D.VisionCore
             catch {}
         }
 
-        // -- IGestureProvider --
         public float X             { get; private set; }
         public float Y             { get; private set; }
-        public bool  GestoDetectado { get; private set; }   // true = ABERTA, false = FECHADA
+        public bool  GestoDetectado { get; private set; }
         public bool  HandDetected   { get; private set; }
 
-        // -- estado adicional exposto para debug no VisionConsole --
         public bool  IsRunning  { get; private set; }
         public bool  IsHandOpen => GestoDetectado;
-        public float Z          { get; private set; }       // estimativa de profundidade por área
+        public float Z          { get; private set; }
         public byte[]? FrameBuffer { get; private set; }
         public int CurrentFPS { get; private set; }
         public long CurrentRAM { get; private set; }
         public double[]? UltimosMomentosHu { get; private set; }
         
-        public int DebugViewIndex { get; set; } = 0; // 0 = Original, 1 = FFT, 2 = Mask, 3 = Canny, 4 = Todos
+        public int DebugViewIndex { get; set; } = 0; // 0 = Original, 1 = Neural Mask
 
         private int _cameraIndex;
         private CancellationTokenSource? _cts;
@@ -100,11 +83,15 @@ namespace Aula3D.VisionCore
         {
             using var capture  = new VideoCapture(_cameraIndex);
             using var frame    = new Mat();
-            using var filtro   = new FiltroEspacial();
+            
+            using var kalman = new SuavizadorKalman();
+            using var segmentador = new SegmentadorNeural("modelo_mao.onnx");
 
             if (!capture.IsOpened()) return;
 
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            long frameCount = 0;
+            Mat ultimaMascara = new Mat();
 
             while (!token.IsCancellationRequested)
             {
@@ -124,191 +111,114 @@ namespace Aula3D.VisionCore
 
                 using Mat frameRoi = new Mat(frame, roi);
 
-                // --- AMOSTRAGEM: Reduz resolução para performance do FFT ---
-                double scale = 150.0 / sideWidth;
-                int newHeight = (int)(sideHeight * scale);
-                using Mat lowResRoi = new Mat();
-                Cv2.Resize(frameRoi, lowResRoi, new Size(150, newHeight), 0, 0, InterpolationFlags.Area);
+                frameCount++;
+                bool processarCargaPesada = frameCount % 3 == 0; 
 
-                // --- FFT 2D: Remoção de ruídos periódicos ---
-                // Para simplificar e evitar distorção de cores, aplicamos FFT no Luma (Brilho) ou ignoramos a cor
-                // O ideal é remover o ruido de fundo mas preservar a cor.
-                // Usaremos no filtro espacial para ajudar o Canny
-                
-                // Aplicamos o filtro de Visão (Cor HSV, CLAHE, Morfologia, Canny) no lowResRoi
-                filtro.Aplicar(lowResRoi);
-                Point[][] contornos = filtro.ExtrairContornos(minArea: 3000 * (scale * scale));
-
-                if (contornos.Length > 0)
+                if (processarCargaPesada)
                 {
-                    Point[] contornoOriginal = contornos[0];
+                    if (!ultimaMascara.Empty()) ultimaMascara.Dispose();
+                    ultimaMascara = segmentador.ObterMascara(frameRoi);
+
+                    Cv2.FindContours(ultimaMascara, out Point[][] contornos, out _, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
+
+                    Point[]? melhorContorno = null;
+                    double maxArea = 0;
                     
-                    // --- RE-AMOSTRAGEM: Escala do Contorno de volta para resolução nativa ---
-                    Point[] contornoScaleBack = new Point[contornoOriginal.Length];
-                    for (int i = 0; i < contornoOriginal.Length; i++)
+                    foreach (var c in contornos)
                     {
-                        contornoScaleBack[i] = new Point(
-                            (int)(contornoOriginal[i].X / scale),
-                            (int)(contornoOriginal[i].Y / scale)
-                        );
+                        double area = Cv2.ContourArea(c);
+                        if (area > 3000 && area > maxArea)
+                        {
+                            maxArea = area;
+                            melhorContorno = c;
+                        }
                     }
-                    
-                    var resultado    = new HandTrackingResult { HandDetected = true, Contour = contornoScaleBack };
 
-                    ExtratorHu.ExtrairGeometria(contornoScaleBack, resultado);
-                    resultado.HuMoments = ExtratorHu.CalcularMomentosHu(contornoScaleBack);
-                    UltimosMomentosHu = resultado.HuMoments;
-                    
-                    ClassificadorDeGestos.Classificar(contornoScaleBack, resultado);
-
-                    HandDetected    = resultado.HandDetected;
-                    GestoDetectado  = resultado.IsHandOpen;
-
-                    // --- DESENHOS DE DEBUG E MELHORIA VISUAL ---
-                    Cv2.DrawContours(frameRoi, new[] { resultado.Contour }, 0, new Scalar(0, 255, 0), 2);
-
-                    if (resultado.DefectPoints != null)
-                        foreach (var pt in resultado.DefectPoints)
-                            Cv2.Circle(frameRoi, pt, 4, new Scalar(255, 0, 255), -1);
-
-                    string textoEstado = GestoDetectado ? "ABERTA (Rotacao)" : "FECHADA (Translacao)";
-                    Scalar corTexto = GestoDetectado ? new Scalar(0, 255, 0) : new Scalar(0, 0, 255);
-
-                    Cv2.PutText(frameRoi, textoEstado,
-                        new Point(resultado.BoundingRect.X, Math.Max(20, resultado.BoundingRect.Y - 10)),
-                        HersheyFonts.HersheySimplex, 0.6, corTexto, 2);
-                    // -------------------------------------------
-
-                    if (resultado.CenterOfMass.X > 0)
+                    if (melhorContorno != null)
                     {
-                        X = resultado.CenterOfMass.X;
-                        Y = resultado.CenterOfMass.Y;
+                        var resultado = new HandTrackingResult { HandDetected = true, Contour = melhorContorno };
 
-                        // Desenha o centro de massa
+                        ExtratorHu.ExtrairGeometria(melhorContorno, resultado);
+                        resultado.HuMoments = ExtratorHu.CalcularMomentosHu(melhorContorno);
+                        UltimosMomentosHu = resultado.HuMoments;
+                        
+                        ClassificadorDeGestos.Classificar(melhorContorno, resultado);
+
+                        HandDetected    = resultado.HandDetected;
+                        GestoDetectado  = resultado.IsHandOpen;
+
+                        var posCorrigida = kalman.Corrigir(resultado.CenterOfMass.X, resultado.CenterOfMass.Y);
+                        X = posCorrigida.X;
+                        Y = posCorrigida.Y;
+
+                        Cv2.DrawContours(frameRoi, new[] { resultado.Contour }, 0, new Scalar(0, 255, 0), 2);
+
+                        if (resultado.DefectPoints != null)
+                            foreach (var pt in resultado.DefectPoints)
+                                Cv2.Circle(frameRoi, pt, 4, new Scalar(255, 0, 255), -1);
+
+                        string textoEstado = GestoDetectado ? "ABERTA (Rotacao)" : "FECHADA (Translacao)";
+                        Scalar corTexto = GestoDetectado ? new Scalar(0, 255, 0) : new Scalar(0, 0, 255);
+
+                        Cv2.PutText(frameRoi, textoEstado,
+                            new Point(resultado.BoundingRect.X, Math.Max(20, resultado.BoundingRect.Y - 10)),
+                            HersheyFonts.HersheySimplex, 0.6, corTexto, 2);
+
                         Cv2.Circle(frameRoi, resultado.CenterOfMass, 6, new Scalar(0, 255, 255), -1);
 
-                        double area = resultado.BoundingRect.Width * resultado.BoundingRect.Height;
-                        Z = (float)(Math.Sqrt(area) / 100.0);
+                        double areaDetectada = resultado.BoundingRect.Width * resultado.BoundingRect.Height;
+                        Z = (float)(Math.Sqrt(areaDetectada) / 100.0);
+                    }
+                    else
+                    {
+                        HandDetected = false;
                     }
                 }
                 else
                 {
-                    HandDetected = false;
+                    if (HandDetected)
+                    {
+                        var pred = kalman.ObterPredicao();
+                        X = pred.X;
+                        Y = pred.Y;
+
+                        Cv2.Circle(frameRoi, new Point((int)X, (int)Y), 6, new Scalar(0, 165, 255), -1);
+                    }
                 }
 
-                // Desenha a região de interesse para saber onde colocar a mão
                 Cv2.Rectangle(frame, roi, new Scalar(255, 255, 0), 2);
                 Cv2.PutText(frame, "AREA DE CONTROLE", new Point(roi.X + 5, roi.Y + 15),
                     HersheyFonts.HersheySimplex, 0.4, new Scalar(255, 255, 0), 1);
 
                 using Mat frameToEncode = new Mat();
-                using Mat debugResized = new Mat();
-                int textY = 25; // Abaixei um pouco para não cortar
-                Scalar textColor = new Scalar(0, 255, 0); // Verde
+                int textY = 25;
+                Scalar textColor = new Scalar(0, 255, 0);
 
-                if (DebugViewIndex == 4) 
+                if (DebugViewIndex == 1 && !ultimaMascara.Empty())
                 {
-                    using Mat m1 = frame.Clone();
-                    using Mat m2 = new Mat();
-                    using Mat m3 = new Mat();
-                    using Mat m4 = new Mat();
-
-                    if (!filtro.MatFFT.Empty())
-                        Cv2.Resize(filtro.MatFFT, m2, frame.Size(), 0, 0, InterpolationFlags.Linear);
-                    else
-                    {
-                        m2.Create(frame.Size(), MatType.CV_8UC1);
-                        m2.SetTo(new Scalar(0));
-                    }
-
-                    if (!filtro.GetMask().Empty())
-                        Cv2.Resize(filtro.GetMask(), m3, frame.Size(), 0, 0, InterpolationFlags.Linear);
-                    else
-                    {
-                        m3.Create(frame.Size(), MatType.CV_8UC1);
-                        m3.SetTo(new Scalar(0));
-                    }
-
-                    if (!filtro.MatCanny.Empty())
-                        Cv2.Resize(filtro.MatCanny, m4, frame.Size(), 0, 0, InterpolationFlags.Linear);
-                    else
-                    {
-                        m4.Create(frame.Size(), MatType.CV_8UC1);
-                        m4.SetTo(new Scalar(0));
-                    }
-
-                    if (m2.Channels() == 1) Cv2.CvtColor(m2, m2, ColorConversionCodes.GRAY2BGR);
-                    if (m3.Channels() == 1) Cv2.CvtColor(m3, m3, ColorConversionCodes.GRAY2BGR);
-                    if (m4.Channels() == 1) Cv2.CvtColor(m4, m4, ColorConversionCodes.GRAY2BGR);
-
-                    Cv2.PutText(m1, "1. Real", new Point(10, textY), HersheyFonts.HersheySimplex, 0.5, textColor, 2);
-                    Cv2.PutText(m2, "2. FFT", new Point(10, textY), HersheyFonts.HersheySimplex, 0.5, textColor, 2);
-                    Cv2.PutText(m3, "3. HSV", new Point(10, textY), HersheyFonts.HersheySimplex, 0.5, textColor, 2);
-                    Cv2.PutText(m4, "4. Canny", new Point(10, textY), HersheyFonts.HersheySimplex, 0.5, textColor, 2);
-
-                    using Mat top = new Mat();
-                    using Mat bottom = new Mat();
-                    Cv2.HConcat(new Mat[] { m1, m2 }, top);
-                    Cv2.HConcat(new Mat[] { m3, m4 }, bottom);
-                    using Mat merged = new Mat();
-                    Cv2.VConcat(new Mat[] { top, bottom }, merged);
-
-                    Cv2.Resize(merged, frameToEncode, frame.Size(), 0, 0, InterpolationFlags.Linear);
+                    using Mat debugResized = new Mat();
+                    Cv2.Resize(ultimaMascara, debugResized, frame.Size(), 0, 0, InterpolationFlags.Linear);
+                    Cv2.CvtColor(debugResized, frameToEncode, ColorConversionCodes.GRAY2BGR);
+                    Cv2.PutText(frameToEncode, "Visualizacao: Neural Mask", new Point(10, textY), HersheyFonts.HersheySimplex, 0.5, textColor, 2);
                 }
                 else 
                 {
-                    Mat sourceMat;
-                    string viewText;
-
-                    if (DebugViewIndex == 1 && !filtro.MatFFT.Empty())
-                    {
-                        sourceMat = filtro.MatFFT;
-                        viewText = "Visualizacao: 2. FFT";
-                    }
-                    else if (DebugViewIndex == 2 && !filtro.GetMask().Empty())
-                    {
-                        sourceMat = filtro.GetMask();
-                        viewText = "Visualizacao: 3. HSV";
-                    }
-                    else if (DebugViewIndex == 3 && !filtro.MatCanny.Empty())
-                    {
-                        sourceMat = filtro.MatCanny;
-                        viewText = "Visualizacao: 4. Canny";
-                    }
-                    else 
-                    {
-                        sourceMat = frame;
-                        viewText = "Visualizacao: 1. Real";
-                    }
-
-                    // Aplica Resize e Color Convert uma uníca vez para a imagem selecionada
-                    if (sourceMat.Width != frame.Width || sourceMat.Height != frame.Height)
-                    {
-                        Cv2.Resize(sourceMat, debugResized, frame.Size(), 0, 0, InterpolationFlags.Linear);
-                        if (debugResized.Channels() == 1)
-                            Cv2.CvtColor(debugResized, frameToEncode, ColorConversionCodes.GRAY2BGR);
-                        else
-                            debugResized.CopyTo(frameToEncode);
-                    }
-                    else
-                    {
-                        sourceMat.CopyTo(frameToEncode);
-                    }
-
-                    Cv2.PutText(frameToEncode, viewText, new Point(10, textY), HersheyFonts.HersheySimplex, 0.5, textColor, 2);
+                    frame.CopyTo(frameToEncode);
+                    Cv2.PutText(frameToEncode, "Visualizacao: 1. Real", new Point(10, textY), HersheyFonts.HersheySimplex, 0.5, textColor, 2);
                 }
 
                 int rightX = frameToEncode.Width - 110;
                 Cv2.PutText(frameToEncode, $"FPS: {CurrentFPS}", new Point(rightX, textY), HersheyFonts.HersheySimplex, 0.5, textColor, 2);
                 Cv2.PutText(frameToEncode, $"RAM: {CurrentRAM}MB", new Point(rightX, textY + 20), HersheyFonts.HersheySimplex, 0.5, textColor, 2);
 
-                // Codifica o frame JÁ DESENHADO em formato JPG leve
                 var encodeParams = new ImageEncodingParam[] { new ImageEncodingParam(ImwriteFlags.JpegQuality, 70) };
                 Cv2.ImEncode(".jpg", frameToEncode, out byte[] buffer, encodeParams);
                 FrameBuffer = buffer;
 
                 Task.Delay(16, token).Wait();
             }
+
+            if (!ultimaMascara.Empty()) ultimaMascara.Dispose();
         }
 
         public void Dispose() => Parar();
