@@ -45,7 +45,7 @@ namespace Aula3D.VisionCore
             var startInfo = new ProcessStartInfo
             {
                 FileName = "uv",
-                Arguments = "run rastreador.py",
+                Arguments = "run main.py",
                 WorkingDirectory = System.IO.Path.GetFullPath("../Aula3D.TrackerService"),
                 UseShellExecute = false,
                 CreateNoWindow = true
