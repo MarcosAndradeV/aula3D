@@ -10,9 +10,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using Aula3D.VisionCore.Processamento;
 
+using Aula3D.VisionCore.Interfaces;
+
 namespace Aula3D.VisionCore
 {
-    public class GestorDeVisaoFacade : IDisposable
+    public class GestorDeVisaoFacade : IGestureProvider, IDisposable
     {
         public float X { get; private set; }
         public float Y { get; private set; }
@@ -24,7 +26,7 @@ namespace Aula3D.VisionCore
 
         private Task? _visionTask;
         private CancellationTokenSource? _cts;
-        
+
         // Componentes de Rede e Processo
         private Process? _pythonProcess;
         private UdpClient? _udpClient;
@@ -46,12 +48,12 @@ namespace Aula3D.VisionCore
             {
                 FileName = "uv",
                 Arguments = "run main.py",
-                WorkingDirectory = System.IO.Path.GetFullPath("../Aula3D.TrackerService"),
+                WorkingDirectory = System.IO.Path.GetFullPath("Aula3D.TrackerService"),
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
-            
-            try 
+
+            try
             {
                 _pythonProcess = Process.Start(startInfo);
             }
@@ -63,7 +65,7 @@ namespace Aula3D.VisionCore
             // 2. Prepara o receptor UDP
             _udpClient = new UdpClient(PortaUDP);
             _cts = new CancellationTokenSource();
-            
+
             IsRunning = true;
             _visionTask = Task.Run(() => LoopDeVisaoUDP(_cts.Token), _cts.Token);
         }
@@ -73,10 +75,10 @@ namespace Aula3D.VisionCore
             if (!IsRunning) return;
 
             _cts?.Cancel();
-            
+
             // Encerra a porta de rede
             _udpClient?.Close();
-            
+
             // Derruba o processo Python atrelado para não deixar processos zumbis
             if (_pythonProcess != null && !_pythonProcess.HasExited)
             {
@@ -103,14 +105,14 @@ namespace Aula3D.VisionCore
                     {
                         byte[] bytesRecebidos = _udpClient.Receive(ref endPoint);
                         string json = System.Text.Encoding.UTF8.GetString(bytesRecebidos);
-                        
+
                         var pontosRede = JsonSerializer.Deserialize<List<PontoRede>>(json);
 
                         if (pontosRede != null && pontosRede.Count == 21)
                         {
                             ProcessarPontosDaRede(pontosRede);
                             frameCount++;
-                            
+
                             // Calcula FPS de rede
                             if (stopwatch.ElapsedMilliseconds >= 1000)
                             {
@@ -123,7 +125,7 @@ namespace Aula3D.VisionCore
                     else
                     {
                         // Evita uso de 100% da CPU enquanto aguarda o pacote
-                        Thread.Sleep(2); 
+                        Thread.Sleep(2);
                     }
                 }
                 catch (Exception)
@@ -145,27 +147,29 @@ namespace Aula3D.VisionCore
 
             // Cria um invólucro convexo (a silhueta externa da mão) usando os pontos
             Point[] convexHull = Cv2.ConvexHull(pontosCv);
-            
+
             // Desenha a silhueta preenchida de branco sólido na imagem preta
             Cv2.FillConvexPoly(mascaraSintetica, convexHull, Scalar.White);
 
             // 3. Reconexão com o seu PDI clássico já existente
             var resultado = new HandTrackingResult { HandDetected = true, Contour = convexHull };
-            
+
+
             ExtratorHu.ExtrairGeometria(convexHull, resultado);
             resultado.HuMoments = ExtratorHu.CalcularMomentosHu(convexHull);
-            
+
             ClassificadorDeGestos.Classificar(convexHull, resultado);
 
             HandDetected = resultado.HandDetected;
             GestoDetectado = resultado.IsHandOpen;
 
+            // Console.WriteLine("CenterOfMass: {0}", resultado.CenterOfMass);
             // 4. Suavização final para o Godot usando o seu Kalman
             if (resultado.CenterOfMass.X > 0)
             {
-                var pontoSuavizado = _kalman.Corrigir(resultado.CenterOfMass.X, resultado.CenterOfMass.Y);
-                X = pontoSuavizado.X;
-                Y = pontoSuavizado.Y;
+                // var pontoSuavizado = _kalman.Corrigir(resultado.CenterOfMass.X, resultado.CenterOfMass.Y);
+                X = resultado.CenterOfMass.X;
+                Y = resultado.CenterOfMass.Y;
 
                 // Calculo de profundidade nativo (Z) baseado na área do ConvexHull
                 double area = Cv2.ContourArea(convexHull);
