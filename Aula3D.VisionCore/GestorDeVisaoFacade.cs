@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Aula3D.VisionCore.Processamento;
+using Aula3D.VisionCore.Utils;
 
 using Aula3D.VisionCore.Interfaces;
 
@@ -48,7 +49,7 @@ namespace Aula3D.VisionCore
             {
                 FileName = "uv",
                 Arguments = "run main.py",
-                WorkingDirectory = System.IO.Path.GetFullPath("Aula3D.TrackerService"),
+                WorkingDirectory = PathResolver.ObterCaminhoTrackerService(),
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
@@ -158,10 +159,43 @@ namespace Aula3D.VisionCore
             ExtratorHu.ExtrairGeometria(convexHull, resultado);
             resultado.HuMoments = ExtratorHu.CalcularMomentosHu(convexHull);
 
-            ClassificadorDeGestos.Classificar(convexHull, resultado);
+            // A implementação antiga de PDI usava Defeitos de Convexidade num contorno.
+            // Como agora temos um ConvexHull gerado a partir dos 21 pontos do MediaPipe, 
+            // os defeitos de convexidade deixam de existir (pois o polígono já é convexo).
+            // Solução: usar os 21 landmarks diretamente para classificar o gesto!
+            
+            bool isHandOpen = false;
+            if (pontosRede.Count == 21)
+            {
+                // Verifica se os dedos estão esticados (a ponta está mais longe do pulso que a junta do meio)
+                int extendedFingers = 0;
+                
+                // Index, Middle, Ring, Pinky
+                int[][] fingers = new int[][] { 
+                    new int[] {8, 6},   // Index Tip vs Index PIP
+                    new int[] {12, 10}, // Middle Tip vs Middle PIP
+                    new int[] {16, 14}, // Ring Tip vs Ring PIP
+                    new int[] {20, 18}  // Pinky Tip vs Pinky PIP
+                };
+
+                var wrist = pontosRede[0];
+                foreach (var f in fingers)
+                {
+                    var tip = pontosRede[f[0]];
+                    var pip = pontosRede[f[1]];
+                    
+                    double distTip = Math.Sqrt(Math.Pow(tip.X - wrist.X, 2) + Math.Pow(tip.Y - wrist.Y, 2));
+                    double distPip = Math.Sqrt(Math.Pow(pip.X - wrist.X, 2) + Math.Pow(pip.Y - wrist.Y, 2));
+                    
+                    if (distTip > distPip) extendedFingers++;
+                }
+
+                // Se pelo menos 2 dedos estiverem esticados, consideramos "Aberto"
+                isHandOpen = extendedFingers >= 2;
+            }
 
             HandDetected = resultado.HandDetected;
-            GestoDetectado = resultado.IsHandOpen;
+            GestoDetectado = isHandOpen;
 
             // Console.WriteLine("CenterOfMass: {0}", resultado.CenterOfMass);
             // 4. Suavização final para o Godot usando o seu Kalman

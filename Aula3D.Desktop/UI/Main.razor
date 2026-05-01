@@ -1,0 +1,122 @@
+@page "/"
+@inject IJSRuntime JSRuntime
+@inject IUdpReceiverService UdpService
+@implements IDisposable
+
+<div style="padding: 10px; background-color: #1e1e1e; color: white; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+    <button @onclick="OpenFilePicker" style="padding: 8px 16px; cursor: pointer; border-radius: 4px; border: none; background: #0078d7; color: white; font-weight: bold;">Carregar Modelo 3D</button>
+    <span style="min-width: 150px;">Gesto: <strong>@_currentGesture</strong></span>
+    <span style="min-width: 200px;">X: @_x.ToString("F2") | Y: @_y.ToString("F2") | Z: @_z.ToString("F2")</span>
+    
+    <div style="display: flex; align-items: center; gap: 8px; margin-left: auto; background: #333; padding: 5px 15px; border-radius: 20px;">
+        <label for="zoomRange" style="font-size: 14px;">Zoom:</label>
+        <input id="zoomRange" type="range" min="0.1" max="5.0" step="0.1" value="@_scale.ToString(System.Globalization.CultureInfo.InvariantCulture)" @oninput="OnScaleChanged" />
+        <span style="font-size: 14px; min-width: 35px;">@_scale.ToString("F1")x</span>
+    </div>
+</div>
+
+<model-viewer id="main-viewer"
+              src="https://modelviewer.dev/shared-assets/models/Astronaut.glb"
+              camera-controls
+              interaction-prompt="none"
+              alt="Modelo 3D"
+              environment-image="neutral"
+              shadow-intensity="1">
+</model-viewer>
+
+@code {
+    private string _currentGesture = "Nenhum";
+    private float _x, _y, _z;
+    private float _scale = 1.0f;
+    private readonly VectorFilter _filter = new VectorFilter(0.15f);
+
+    private async Task OnScaleChanged(ChangeEventArgs e)
+    {
+        if (float.TryParse(e.Value?.ToString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float val))
+        {
+            _scale = val;
+            await JSRuntime.InvokeVoidAsync("updateModelScale", _scale);
+        }
+    }
+
+    protected override void OnInitialized()
+    {
+        UdpService.OnDataReceived += HandleDataReceived;
+        UdpService.StartListening();
+    }
+
+    private void HandleDataReceived(TrackingData data)
+    {
+        // Aplica estabilização matemática (Lerp)
+        var smoothed = _filter.ApplyLerp(data.X, data.Y, data.Z);
+        
+        _x = smoothed.X;
+        _y = smoothed.Y;
+        _z = smoothed.Z;
+        _currentGesture = data.GestoDetectado;
+
+        InvokeAsync(StateHasChanged);
+
+        // A câmera/webcam tem resolução 640x480. 
+        // Centro em X=320, Y=240
+        // Precisamos normalizar para não mandar "300 metros" pro model-viewer
+        
+        float normX = (_x - 320f) / 320f; // range -1 a 1
+        float normY = (_y - 240f) / 240f; // range -1 a 1
+
+        if (_currentGesture.Equals("Aberto", StringComparison.OrdinalIgnoreCase))
+        {
+            // Rotação: Ao invés de girar o modelo (que orbita no pé), giramos a câmera em volta do objeto.
+            // Theta (horizontal): -PI a PI
+            float theta = normX * (float)Math.PI;
+            // Phi (vertical): de 0 (topo) a PI (embaixo). Centro é PI/2 (90 graus)
+            float phi = (normY * (float)(Math.PI / 2.0)) + (float)(Math.PI / 2.0);
+            
+            InvokeAsync(() => JSRuntime.InvokeVoidAsync("updateModelRotation", theta, phi, 0));
+        }
+        else if (_currentGesture.Equals("Fechado", StringComparison.OrdinalIgnoreCase))
+        {
+            // Pan: Sensibilidade bem menor (0.2m) para não mandar o modelo para fora da tela
+            float panX = normX * 0.2f; 
+            float panY = -normY * 0.2f;
+            InvokeAsync(() => JSRuntime.InvokeVoidAsync("updateModelPan", panX, panY, 0));
+        }
+    }
+
+    private async Task OpenFilePicker()
+    {
+        // Como o Photino atualmente não expõe um FilePicker nativo diretamente para o Blazor de forma trivil,
+        // mas rodamos num ambiente Desktop, podemos usar um OpenFileDialog nativo ou pedir o caminho do arquivo.
+        // Uma forma cross-platform moderna para Blazor Hybrid é usar um input type="file" ou bibliotecas.
+        // Aqui, usaremos a abordagem de chamar JS para criar um input dinâmico.
+        
+        var fileUrl = await JSRuntime.InvokeAsync<string>("eval", @"
+            new Promise((resolve) => {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = '.glb,.gltf';
+                input.onchange = e => {
+                    const file = e.target.files[0];
+                    if(file) {
+                        // URL temporária no navegador para carregar local
+                        resolve(URL.createObjectURL(file));
+                    } else {
+                        resolve('');
+                    }
+                };
+                input.click();
+            })
+        ");
+
+        if (!string.IsNullOrEmpty(fileUrl))
+        {
+            await JSRuntime.InvokeVoidAsync("loadModel", fileUrl);
+        }
+    }
+
+    public void Dispose()
+    {
+        UdpService.OnDataReceived -= HandleDataReceived;
+        UdpService.StopListening();
+    }
+}
