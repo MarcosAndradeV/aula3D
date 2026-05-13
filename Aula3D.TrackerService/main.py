@@ -16,7 +16,7 @@ model_path = 'hand_landmarker.task'
 base_options = python.BaseOptions(model_asset_path=model_path)
 options = vision.HandLandmarkerOptions(
     base_options=base_options,
-    num_hands=1,
+    num_hands=2,
     min_hand_detection_confidence=0.5,
     min_hand_presence_confidence=0.5,
     min_tracking_confidence=0.5,
@@ -45,24 +45,49 @@ with vision.HandLandmarker.create_from_options(options) as landmarker:
             timestamp_ms = int(time.time() * 1000)
             results = landmarker.detect_for_video(mp_image, timestamp_ms)
 
+            hands_payload = []
+
             if results.hand_landmarks:
-                hand_landmarks = results.hand_landmarks[0]
-                points = []
-                
-                for landmark in hand_landmarks:
-                    points.append({
-                        "X": int(landmark.x * w),
-                        "Y": int(landmark.y * h)
+                for idx, hand_landmarks in enumerate(results.hand_landmarks):
+                    handedness = results.handedness[idx][0]
+                    # Correção do Espelhamento: Inverte Left/Right pois a imagem foi flipada
+                    label = handedness.category_name
+                    if label == "Left":
+                        label = "Right"
+                    elif label == "Right":
+                        label = "Left"
+                    
+                    landmarks = []
+                    for landmark in hand_landmarks:
+                        landmarks.append({
+                            "X": int(landmark.x * w),
+                            "Y": int(landmark.y * h)
+                        })
+                    
+                    # Calcula o centro da mão (média dos landmarks) para facilitar no C#
+                    center_x = int(sum(p["X"] for p in landmarks) / len(landmarks))
+                    center_y = int(sum(p["Y"] for p in landmarks) / len(landmarks))
+
+                    hands_payload.append({
+                        "Id": idx,
+                        "Label": label,
+                        "Handedness": label,
+                        "CenterX": center_x,
+                        "CenterY": center_y,
+                        "Landmarks": landmarks
                     })
 
-                if len(points) == 21:
-                    # Desenha bolinhas verdes na mão para feedback visual
-                    for p in points:
-                        cv2.circle(image, (p["X"], p["Y"]), 4, (0, 255, 0), -1)
+                    # Desenha feedback visual
+                    color = (0, 255, 0) if label == "Right" else (255, 0, 0)
+                    for p in landmarks:
+                        cv2.circle(image, (p["X"], p["Y"]), 3, color, -1)
+                    cv2.putText(image, label, (center_x, center_y), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
-                    # Envia os dados para o C#
-                    data = json.dumps(points).encode('utf-8')
-                    sock.sendto(data, (UDP_IP, UDP_PORT))
+            # Envia os dados para o C# se houver mãos detectadas
+            if hands_payload:
+                data = json.dumps(hands_payload).encode('utf-8')
+                sock.sendto(data, (UDP_IP, UDP_PORT))
 
             # Exibe a janela da câmara
             cv2.imshow("Olho do MediaPipe (Python)", image)

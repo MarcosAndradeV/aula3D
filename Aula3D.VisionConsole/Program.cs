@@ -11,7 +11,15 @@ while (true)
     if (Console.KeyAvailable && Console.ReadKey(true).Key == ConsoleKey.Escape)
         break;
 
-    Console.Write($"\rX: {facade.X:F2} | Y: {facade.Y:F2} | Z: {facade.Z:F2} | Aberta? {facade.GestoDetectado} | FPS UDP: {facade.CurrentFPS}    ");
+    if (facade.LatestHands.Count > 0)
+    {
+        var h = facade.LatestHands[0];
+        Console.Write($"\rMãos: {facade.LatestHands.Count} | X: {h.CenterX:F2} | Y: {h.CenterY:F2} | Aberta? {h.IsOpen} | FPS UDP: {facade.CurrentFPS}    ");
+    }
+    else
+    {
+        Console.Write($"\rNenhuma mão detectada. FPS UDP: {facade.CurrentFPS}                                ");
+    }
     System.Threading.Thread.Sleep(50);
 }
 

@@ -29,14 +29,11 @@ public class UdpReceiverService : IUdpReceiverService, IDisposable
         {
             while (!token.IsCancellationRequested)
             {
-                if (_facade != null && _facade.HandDetected)
+                if (_facade != null && _facade.LatestHands.Any())
                 {
                     var data = new TrackingData
                     {
-                        X = _facade.X,
-                        Y = _facade.Y,
-                        Z = _facade.Z,
-                        GestoDetectado = _facade.GestoDetectado ? "Aberto" : "Fechado"
+                        Hands = _facade.LatestHands.ToList()
                     };
                     OnDataReceived?.Invoke(data);
                 }
