@@ -1,12 +1,7 @@
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Aula3D.VisionCore.Processamento;
 using Aula3D.VisionCore.Utils;
 using Aula3D.VisionCore.Interfaces;
@@ -19,23 +14,18 @@ namespace Aula3D.VisionCore
         public bool IsRunning { get; private set; }
         public int CurrentFPS { get; private set; }
 
+        public event Action<List<HandData>>? OnHandsDetected;
+
         private Task? _visionTask;
         private CancellationTokenSource? _cts;
-
-        // Componentes de Rede e Processo
         private Process? _pythonProcess;
         private UdpClient? _udpClient;
         private const int PortaUDP = 5005;
-
-        public GestorDeVisaoFacade()
-        {
-        }
 
         public void Iniciar()
         {
             if (IsRunning) return;
 
-            // 1. Inicia o Microserviço Python em background (Oculto)
             var startInfo = new ProcessStartInfo
             {
                 FileName = "uv",
@@ -54,11 +44,10 @@ namespace Aula3D.VisionCore
                 Console.WriteLine($"Erro ao iniciar o microserviço Python: {ex.Message}");
             }
 
-            // 2. Prepara o receptor UDP
             _udpClient = new UdpClient(PortaUDP);
             _cts = new CancellationTokenSource();
-
             IsRunning = true;
+            
             _visionTask = Task.Run(() => LoopDeVisaoUDP(_cts.Token), _cts.Token);
         }
 
@@ -67,11 +56,8 @@ namespace Aula3D.VisionCore
             if (!IsRunning) return;
 
             _cts?.Cancel();
-
-            // Encerra a porta de rede
             _udpClient?.Close();
 
-            // Derruba o processo Python atrelado para não deixar processos zumbis
             if (_pythonProcess != null && !_pythonProcess.HasExited)
             {
                 _pythonProcess.Kill();
@@ -84,7 +70,7 @@ namespace Aula3D.VisionCore
 
         private void LoopDeVisaoUDP(CancellationToken token)
         {
-            IPEndPoint endPoint = new IPEndPoint(IPAddress.Loopback, PortaUDP);
+            IPEndPoint endPoint = new IPEndPoint(IPAddress.Any, PortaUDP);
             var stopwatch = Stopwatch.StartNew();
             int frameCount = 0;
 
@@ -92,7 +78,6 @@ namespace Aula3D.VisionCore
             {
                 try
                 {
-                    // Verifica se há pacotes na rede sem travar a thread
                     if (_udpClient!.Available > 0)
                     {
                         byte[] bytesRecebidos = _udpClient.Receive(ref endPoint);
@@ -104,13 +89,15 @@ namespace Aula3D.VisionCore
                         {
                             foreach (var hand in hands)
                             {
-                                hand.Classify();
+                                hand.Classify(); // Executa a classificação baseada em Landmarks
                             }
                             
                             LatestHands = hands;
                             frameCount++;
 
-                            // Calcula FPS de rede
+                            // Dispara o evento reativo e atualiza estado
+                            OnHandsDetected?.Invoke(hands);
+
                             if (stopwatch.ElapsedMilliseconds >= 1000)
                             {
                                 CurrentFPS = frameCount;
@@ -121,21 +108,20 @@ namespace Aula3D.VisionCore
                     }
                     else
                     {
-                        // Evita uso de 100% da CPU enquanto aguarda o pacote
-                        Thread.Sleep(2);
+                        Thread.Sleep(1); // Evita consumo excessivo de CPU
                     }
                 }
-                catch (Exception)
+                catch (SocketException)
                 {
-                    // Ignora erros de socket durante o encerramento
                     if (token.IsCancellationRequested) break;
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Erro no processamento UDP: {ex.Message}");
                 }
             }
         }
 
-        public void Dispose()
-        {
-            Parar();
-        }
+        public void Dispose() => Parar();
     }
 }

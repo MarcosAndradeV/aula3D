@@ -8,17 +8,4 @@
     <AssemblyName>Aula3D.VisionCore</AssemblyName>
     <RootNamespace>Aula3D.VisionCore</RootNamespace>
   </PropertyGroup>
-
-  <ItemGroup>
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Update="*.onnx*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
-
-  <ItemGroup>
-    <Compile Remove="Processamento\ClassificadorDeGestos.cs" />
-  </ItemGroup>
 </Project>
