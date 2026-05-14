@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using Aula3D.VisionCore;
 
 namespace Aula3D.Desktop.Core.Models;

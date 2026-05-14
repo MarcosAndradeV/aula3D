@@ -1,222 +1,73 @@
 @page "/"
-@using Aula3D.VisionCore
-@using Aula3D.Desktop.Core.Models
-@inject IJSRuntime JSRuntime
+@inject ModelViewerService Viewer
+@inject InteractionProcessor Processor
 @inject IUdpReceiverService UdpService
+@inject IJSRuntime JSRuntime
 @implements IDisposable
 
-<div style="padding: 10px; background-color: #1e1e1e; color: white; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-    <button @onclick="OpenFilePicker" style="padding: 8px 16px; cursor: pointer; border-radius: 4px; border: none; background: #0078d7; color: white; font-weight: bold;">Carregar Modelo 3D</button>
-    <button @onclick="() => _showTips = true" style="padding: 8px 16px; cursor: pointer; border-radius: 4px; border: none; background: #444; color: white; font-weight: bold;">Dicas de Gestos</button>
-    <span style="min-width: 150px;">Mãos Detectadas: <strong>@_handCount</strong></span>
-    <span style="min-width: 200px;">Pan X: @_panAccumX.ToString("F2") | Y: @_panAccumY.ToString("F2") | Scale: @_scale.ToString("F2")</span>
+<div class="toolbar" style="padding: 10px; background: #1e1e1e; color: white; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+    <button @onclick="HandleFilePicker" style="padding: 8px 16px; cursor: pointer; border-radius: 4px; border: none; background: #0078d7; color: white; font-weight: bold;">Carregar Modelo 3D</button>
+    <button @onclick="() => _showTips = true" style="padding: 8px 16px; cursor: pointer; border-radius: 4px; border: none; background: #444; color: white; font-weight: bold;">Dicas</button>
+    
+    <div class="status-panel" style="display: flex; gap: 15px; align-items: center;">
+        <span>Mãos: <strong>@_handCount</strong></span>
+        <span>Modo: <strong>@_currentMode</strong></span>
+        <span>Pan X: @Processor.PanX.ToString("F2") | Y: @Processor.PanY.ToString("F2")</span>
+    </div>
     
     <div style="display: flex; align-items: center; gap: 8px; margin-left: auto; background: #333; padding: 5px 15px; border-radius: 20px;">
-        <label for="zoomRange" style="font-size: 14px;">Zoom:</label>
-        <input id="zoomRange" type="range" min="0.1" max="5.0" step="0.1" value="@_scale.ToString(System.Globalization.CultureInfo.InvariantCulture)" 
-               @oninput="OnScaleChanged" />
-        <span style="font-size: 14px; min-width: 35px;">@_scale.ToString("F1")x</span>
+        <span>Zoom: <strong>@Processor.Scale.ToString("F1")x</strong></span>
     </div>
 </div>
 
-<model-viewer id="main-viewer"
-              src="https://modelviewer.dev/shared-assets/models/Astronaut.glb"
-              camera-controls
-              interaction-prompt="none"
-              alt="Modelo 3D"
-              environment-image="neutral"
-              shadow-intensity="1">
-</model-viewer>
+<model-viewer id="main-viewer" src="https://modelviewer.dev/shared-assets/models/Astronaut.glb" camera-controls interaction-prompt="none"></model-viewer>
 
 @if (_showTips)
 {
-    <div style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000; display: flex; align-items: center; justify-content: center;">
-        <div style="background: #252525; color: white; padding: 30px; border-radius: 12px; max-width: 500px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); border: 1px solid #444;">
-            <h3 style="margin-top: 0; color: #0078d7; border-bottom: 1px solid #333; padding-bottom: 10px;">Dicas de Controlo</h3>
-            <ul style="list-style: none; padding: 0; line-height: 2;">
-                <li>✋ <strong>Mão Aberta:</strong> Rotacionar o modelo.</li>
-                <li>✊ <strong>Mão Fechada:</strong> Movimento leve (Pan).</li>
-                <li>👐 <strong>Duas Mãos Abertas:</strong> Zoom (Aproximar/Afastar).</li>
-                <li>☝️ <strong>Um Dedo em Cada Mão:</strong> Movimentação livre (Ponto Médio).</li>
-            </ul>
-            <button @onclick="() => _showTips = false" 
-                    style="margin-top: 20px; width: 100%; padding: 12px; background: #0078d7; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">
-                Fechar
-            </button>
-        </div>
+    <div class="modal-overlay" style="position: absolute; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); color:white; display:flex; flex-direction:column; justify-content:center; align-items:center; z-index:100;">
+        <h3>Dicas de Interação</h3>
+        <ul style="list-style:none; padding:0; line-height:2em;">
+            <li><strong>1 Mão Aberta:</strong> Rodar o Modelo</li>
+            <li><strong>1 Mão Fechada:</strong> Mover o Modelo</li>
+            <li><strong>2 Mãos Abertas:</strong> Zoom (Aproximar/Afastar)</li>
+        </ul>
+        <button @onclick="() => _showTips = false" style="margin-top:20px; padding: 10px 20px; background: #0078d7; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Fechar</button>
     </div>
 }
 
 @code {
-    private const float PAN_SENSITIVITY = 10.0f;
-    private const float ROTATION_SENSITIVITY = 2.0f;
-
-    private int _handCount = 0;
-    private float _scale = 1.0f;
     private bool _showTips = false;
-    
-    // Estado de Pan (Uma Mão)
-    private float _panAccumX = 0f;
-    private float _panAccumY = 0f;
-    private float? _lastHandX = null;
-    private float? _lastHandY = null;
-    
-    // Estado de Rotação (Duas Mãos "Apontar" ou Uma Mão "Aberta")
-    private float _theta = 0f;
-    private float _phi = (float)Math.PI / 2.0f;
-    
-    // Estado de Zoom (Duas Mãos "Abertas")
-    private float? _lastHandsDistance = null;
-    
-    // Estado de Ponto Médio (Para Rotação com 2 mãos)
-    private float? _lastMidPointX = null;
-    private float? _lastMidPointY = null;
-
-    private async Task OnScaleChanged(ChangeEventArgs e)
-    {
-        if (float.TryParse(e.Value?.ToString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float val))
-        {
-            _scale = val;
-            await JSRuntime.InvokeVoidAsync("updateModelScale", _scale);
-        }
-    }
+    private string _currentMode = "Inativo";
+    private int _handCount = 0;
 
     protected override void OnInitialized()
     {
-        UdpService.OnDataReceived += HandleDataReceived;
+        UdpService.OnDataReceived += HandleData;
         UdpService.StartListening();
     }
 
-    private void HandleDataReceived(TrackingData data)
+    private void HandleData(TrackingData data)
     {
-        _handCount = data.Hands.Count;
-        
-        if (_handCount == 1)
+        _handCount = data.Hands?.Count ?? 0;
+        var (updated, mode) = Processor.Process(data.Hands ?? new());
+        _currentMode = mode;
+
+        if (updated)
         {
-            // Reset estados de 2 mãos
-            _lastHandsDistance = null;
-            _lastMidPointX = null;
-            _lastMidPointY = null;
-            ProcessSingleHand(data.Hands[0]);
-        }
-        else if (_handCount == 2)
-        {
-            // Reset estados de 1 mão
-            _lastHandX = null;
-            _lastHandY = null;
-            ProcessTwoHands(data.Hands[0], data.Hands[1]);
+            InvokeAsync(async () => {
+                if (mode == "Zoom") await Viewer.UpdateScaleAsync(Processor.Scale);
+                else if (mode == "Rotação") await Viewer.UpdateRotationAsync(Processor.Theta, Processor.Phi);
+                else if (mode == "Pan") await Viewer.UpdatePanAsync(Processor.PanX, Processor.PanY);
+                StateHasChanged();
+            });
         }
         else
         {
-            // Reset de tudo quando não há mãos
-            _lastHandX = null;
-            _lastHandY = null;
-            _lastHandsDistance = null;
-            _lastMidPointX = null;
-            _lastMidPointY = null;
-        }
-
-        InvokeAsync(StateHasChanged);
-    }
-
-    private void ProcessSingleHand(HandData hand)
-    {
-        // Normaliza as coordenadas (considerando 640x480 do microserviço)
-        float normX = (hand.CenterX - 320f) / 320f;
-        float normY = (hand.CenterY - 240f) / 240f;
-
-        if (hand.IsOpen)
-        {
-            // Reset do estado de drag quando a mão abrir
-            _lastHandX = null;
-            _lastHandY = null;
-
-            // Rotação Absoluta (Mão Aberta)
-            _theta = normX * (float)Math.PI;
-            _phi = (normY * (float)(Math.PI / 2.0)) + (float)(Math.PI / 2.0);
-            InvokeAsync(() => JSRuntime.InvokeVoidAsync("updateModelRotation", _theta, _phi, 0));
-        }
-        else // Mão Fechada -> PAN RELATIVO 1:1
-        {
-            if (_lastHandX.HasValue && _lastHandY.HasValue)
-            {
-                float deltaX = normX - _lastHandX.Value;
-                float deltaY = normY - _lastHandY.Value;
-
-                // Alta sensibilidade para dar efeito 1:1
-                _panAccumX += deltaX * PAN_SENSITIVITY; 
-                _panAccumY -= deltaY * PAN_SENSITIVITY; 
-
-                InvokeAsync(() => JSRuntime.InvokeVoidAsync("updateModelPan", _panAccumX, _panAccumY, 0));
-            }
-            
-            _lastHandX = normX;
-            _lastHandY = normY;
+            InvokeAsync(StateHasChanged);
         }
     }
 
-    private void ProcessTwoHands(HandData h1, HandData h2)
-    {
-        // Ponto Médio Normalizado
-        float midX = ((h1.CenterX + h2.CenterX) / 2f - 320f) / 320f;
-        float midY = ((h1.CenterY + h2.CenterY) / 2f - 240f) / 240f;
-
-        // 1. ROTAÇÃO FLUIDA (Ambas as mãos em "Apontar")
-        if (h1.IsPointing && h2.IsPointing)
-        {
-            // Reset outros estados de duas mãos para evitar interferência
-            _lastHandsDistance = null;
-
-            if (_lastMidPointX.HasValue && _lastMidPointY.HasValue)
-            {
-                float deltaX = midX - _lastMidPointX.Value;
-                float deltaY = midY - _lastMidPointY.Value;
-
-                // Atualiza ângulos de forma acumulada (fluida)
-                _theta += deltaX * ROTATION_SENSITIVITY;
-                _phi += deltaY * ROTATION_SENSITIVITY;
-
-                // Limita Phi para evitar inversão da câmera (entre 0.1 e PI-0.1)
-                _phi = Math.Clamp(_phi, 0.1f, (float)Math.PI - 0.1f);
-
-                InvokeAsync(() => JSRuntime.InvokeVoidAsync("updateModelRotation", _theta, _phi, 0));
-            }
-
-            _lastMidPointX = midX;
-            _lastMidPointY = midY;
-            return;
-        }
-        else
-        {
-            _lastMidPointX = null;
-            _lastMidPointY = null;
-        }
-
-        // 2. ZOOM POR PINÇA (Ambas as mãos "Abertas")
-        if (h1.IsOpen && h2.IsOpen)
-        {
-            float dist = (float)Math.Sqrt(Math.Pow(h1.CenterX - h2.CenterX, 2) + Math.Pow(h1.CenterY - h2.CenterY, 2));
-
-            if (_lastHandsDistance.HasValue)
-            {
-                float deltaDist = dist - _lastHandsDistance.Value;
-                
-                // Sensibilidade do Zoom
-                float scaleStep = deltaDist / 200f;
-                _scale = Math.Clamp(_scale + scaleStep, 0.1f, 5.0f);
-
-                InvokeAsync(() => JSRuntime.InvokeVoidAsync("updateModelScale", _scale));
-            }
-
-            _lastHandsDistance = dist;
-        }
-        else
-        {
-            _lastHandsDistance = null;
-        }
-    }
-
-    private async Task OpenFilePicker()
+    private async Task HandleFilePicker()
     {
         var fileUrl = await JSRuntime.InvokeAsync<string>("eval", @"
             new Promise((resolve) => {
@@ -226,7 +77,6 @@
                 input.onchange = e => {
                     const file = e.target.files[0];
                     if(file) {
-                        // URL temporária no navegador para carregar local
                         resolve(URL.createObjectURL(file));
                     } else {
                         resolve('');
@@ -238,13 +88,13 @@
 
         if (!string.IsNullOrEmpty(fileUrl))
         {
-            await JSRuntime.InvokeVoidAsync("loadModel", fileUrl);
+            await Viewer.LoadModelAsync(fileUrl);
         }
     }
 
     public void Dispose()
     {
-        UdpService.OnDataReceived -= HandleDataReceived;
+        UdpService.OnDataReceived -= HandleData;
         UdpService.StopListening();
     }
 }

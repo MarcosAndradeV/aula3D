@@ -14,6 +14,9 @@ class Program
 
         // Registro de Serviços
         appBuilder.Services.AddSingleton<IUdpReceiverService, UdpReceiverService>();
+        
+        appBuilder.Services.AddScoped<ModelViewerService>();
+        appBuilder.Services.AddScoped<InteractionProcessor>();
 
         // Configuração da janela principal
         appBuilder.RootComponents.Add<UI.App>("#app");
